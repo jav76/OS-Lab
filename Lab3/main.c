@@ -71,7 +71,7 @@ void listFiles(FILE* floppy)
         }
         usedSectors = usedSectors + dir[i + 10];
         usedBytes = usedBytes + dir[i + 10] * 512;
-        printf("%8s.%c %d bytes used\n", fileName, ext, usedBytes);
+        printf("%8s.%c %d bytes used\n", fileName, ext, dir[i + 10] * 512);
     }
     printf("\n");
     printf("Total space used: %d sectors, %d bytes\n", usedSectors, usedBytes);
@@ -79,7 +79,7 @@ void listFiles(FILE* floppy)
 
 }
 
-void readFile(FILE* floppy, char searchFile[])
+void readFile(FILE* floppy, char searchFile[8])
 {
     //load the directory from sector 257
     char dir[512];
@@ -154,6 +154,196 @@ void readFile(FILE* floppy, char searchFile[])
     }
 }
 
+void writeFile(FILE* floppy, char searchFile[8])
+{
+
+    //load the directory from sector 257
+    char dir[512];
+    int i, j, freeDir = -1, freeMap = -1;
+    bool found = false, isText = false;
+    fseek(floppy,512*257,SEEK_SET);
+    for (i=0; i<512; i++)
+        dir[i]=fgetc(floppy);
+
+    //load the map
+    char map[512];
+    fseek(floppy,512*256,SEEK_SET);
+    for(i=0; i<512; i++)
+        map[i]=fgetc(floppy);
+
+    for (i=0; i<512; i=i+16)
+    {
+        if (dir[i] == 0 && freeDir == -1)
+        {
+            // Find first free sector
+            freeDir = i;
+            continue;
+        }
+        char fileName[8] = "";
+        for (j=0; j<8; j++)
+        {
+            if (dir[i + j] != 0)
+            {
+                fileName[j] = dir[i + j];
+            }
+        }
+        char ext;
+        if (toupper(dir[i + 8]) == 'T')
+        {
+            ext = 't';
+        }
+        else
+        {
+            if (toupper(dir[i + 8]) == 'X')
+            {
+                ext = 'x';
+            }
+        }
+        if (strcmp(fileName, searchFile) == 0)
+        {
+            found = true;
+            if (ext == 't')
+            {
+                isText = true;
+                break;
+            }
+            break;
+        }
+    }
+    if (found)
+    {
+        if (isText)
+        {
+            // Duplicate file
+            printf("File %s.t already exists\n", searchFile);
+        }
+    }
+    else
+    {
+        // File does not exist yet
+
+        for (i = 0; i < 16; i++)
+        {
+            if (freeMap != -1)
+            {
+                break;
+            }
+            for (j = 0; j < 16; j++)
+            {
+                if (freeMap != -1)
+                {
+                    break;
+                }
+                if (map[16 * i * j] == 0)
+                {
+                    // Found a free map spot
+                    map[16 * i * j] = 0xff;
+                    freeMap = 16 * i * j;
+                }
+            }
+        }
+        if (freeMap == -1)
+        {
+            printf("Insufficient disk space.\n");
+        }
+        else
+        {
+            for (i = 0; i < strlen(searchFile); i++)
+            {
+                dir[freeDir + i] = searchFile[i];
+            }
+            for (i = strlen(searchFile); i < 8; i++)
+            {
+                dir[freeDir + i] = 0;
+            }
+            dir[freeDir + 8] = 't'; // Text file
+            dir[freeDir + 9] = freeMap; // Offset
+            dir[freeDir + 10] = 1; // One sector sized file
+        }
+        printf("Enter text for file %s\n", searchFile);
+        char text[512];
+        fgets(text, sizeof(text), stdin);
+
+        // Write the contents of text to the floppy
+        fseek(floppy, 512*freeMap, SEEK_SET);
+        for (i = 0; i < 512; i++)
+            fputc(text[i], floppy);
+
+        //write the map and directory to the floppy
+        fseek(floppy,512*256,SEEK_SET);
+        for (i=0; i<512; i++) fputc(map[i],floppy);
+
+        fseek(floppy,512*257,SEEK_SET);
+        for (i=0; i<512; i++) fputc(dir[i],floppy);
+    }
+}
+
+
+void deleteFile(FILE* floppy, char searchFile[8])
+{
+
+    //load the directory from sector 257
+    char dir[512];
+    int i, j;
+    bool found = false;
+    int sectorStart, sectorSize;
+    fseek(floppy,512*257,SEEK_SET);
+    for (i=0; i<512; i++)
+        dir[i]=fgetc(floppy);
+
+    //load the map
+    char map[512];
+    fseek(floppy,512*256,SEEK_SET);
+    for(i=0; i<512; i++)
+        map[i]=fgetc(floppy);
+
+    for (i=0; i<512; i=i+16)
+    {
+        if (dir[i] == 0)
+        {
+            continue;
+        }
+        char fileName[8] = "";
+        for (j=0; j<8; j++)
+        {
+            if (dir[i + j] != 0)
+            {
+                fileName[j] = dir[i + j];
+            }
+        }
+        if (strcmp(fileName, searchFile) == 0)
+        {
+            found = true;
+            dir[i] = 0;
+            sectorStart = dir[i + 9];
+            sectorSize = dir[i + 10];
+            break;
+        }
+    }
+    if (found)
+    {
+        // File found to delete
+        for (i = 0; i < sectorSize; i++)
+        {
+            map[sectorStart] = 0;
+            sectorStart++;
+        }
+        printf("File %s deleted.\n", searchFile);
+    }
+    else
+    {
+        // File does not exist
+        printf("File %s does not exist.\n", searchFile);
+
+    }
+    //write the map and directory back to the floppy image
+    fseek(floppy,512*256,SEEK_SET);
+    for (i=0; i<512; i++) fputc(map[i],floppy);
+
+    fseek(floppy,512*257,SEEK_SET);
+    for (i=0; i<512; i++) fputc(dir[i],floppy);
+}
+
 int main(int argc, char* argv[])
 {
     char name[8] = {-1};
@@ -187,6 +377,7 @@ int main(int argc, char* argv[])
             if (name[0] != -1)
             {
                 printf("Given command D\n");
+                deleteFile(floppy, name);
             }
             else
             {
@@ -209,6 +400,7 @@ int main(int argc, char* argv[])
             if (name[0] != -1)
             {
                 printf("Given command M\n");
+                writeFile(floppy, name);
             }
             else
             {
@@ -240,63 +432,5 @@ int main(int argc, char* argv[])
 
     }
 
-    int i, j, size, noSecs, startPos;
-
-
-    /*
-
-    //load the disk map from sector 256
-    char map[512];
-    fseek(floppy,512*256,SEEK_SET);
-    for(i=0; i<512; i++)
-        map[i]=fgetc(floppy);
-
-    //load the directory from sector 257
-    char dir[512];
-    fseek(floppy,512*257,SEEK_SET);
-    for (i=0; i<512; i++)
-        dir[i]=fgetc(floppy);
-
-    //print disk map
-    printf("Disk usage map:\n");
-    printf("      0 1 2 3 4 5 6 7 8 9 A B C D E F\n");
-    printf("     --------------------------------\n");
-    for (i=0; i<16; i++) {
-        switch(i) {
-            case 15: printf("0xF_ "); break;
-            case 14: printf("0xE_ "); break;
-            case 13: printf("0xD_ "); break;
-            case 12: printf("0xC_ "); break;
-            case 11: printf("0xB_ "); break;
-            case 10: printf("0xA_ "); break;
-            default: printf("0x%d_ ", i); break;
-        }
-        for (j=0; j<16; j++) {
-            if (map[16*i+j]==-1) printf(" X"); else printf(" .");
-        }
-        printf("\n");
-    }
-
-    // print directory
-    printf("\nDisk directory:\n");
-    printf("Name    Type Start Length\n");
-    for (i=0; i<512; i=i+16) {
-        if (dir[i]==0) break;
-        for (j=0; j<8; j++) {
-            if (dir[i+j]==0) printf(" "); else printf("%c",dir[i+j]);
-        }
-        if ((dir[i+8]=='t') || (dir[i+8]=='T')) printf("text"); else printf("exec");
-        printf(" %5d %6d bytes\n", dir[i+9], 512*dir[i+10]);
-    }
-
-*/
-/*
-	//write the map and directory back to the floppy image
-    fseek(floppy,512*256,SEEK_SET);
-    for (i=0; i<512; i++) fputc(map[i],floppy);
-
-    fseek(floppy,512*257,SEEK_SET);
-    for (i=0; i<512; i++) fputc(dir[i],floppy);
-*/
     fclose(floppy);
 }

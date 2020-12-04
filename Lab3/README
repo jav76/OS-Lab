@@ -1,0 +1,6 @@
+How to compile:
+1. Navigate to Lab3 directory
+2. Type "make"
+3. Execute the binary "./lab3.o"
+
+
